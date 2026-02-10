@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+
+# Spyder
+.spyderproject
+.spyderworkspace
+.spyder-py3/
+
+# Excel outputs
+*.xlsx
+
+# Secrets
+.env
+.env.*
+secrets.py
+
+# OS
+Thumbs.db
+.DS_Store
