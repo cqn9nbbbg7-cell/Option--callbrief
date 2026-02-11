@@ -18,3 +18,8 @@ secrets.py
 # OS
 Thumbs.db
 .DS_Store
+# Logs
+logs/
+
+# Environment files
+.env
