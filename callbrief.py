@@ -2,6 +2,8 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+import os
+import requests
 
 import numpy as np
 import pandas as pd
@@ -227,13 +229,48 @@ def export_to_excel(df: pd.DataFrame, meta: dict, cfg: RunConfig) -> Path:
 
     return out_path
 
+def send_discord(message: str) -> None:
+    url = os.getenv("DISCORD_WEBHOOK_URL")
+    if not url:
+        print("DISCORD_WEBHOOK_URL not set; skipping Discord.")
+        return
+    r = requests.post(url, json={"content": message[:1900]}, timeout=15)
+    print("Discord status:", r.status_code)
+    r.raise_for_status()
+
+
+def shortlist_calls(df: pd.DataFrame, meta: dict, top_n: int = 8) -> pd.DataFrame:
+    d = df.copy()
+
+    # Require columns used below
+    needed = ["mid", "spread_pct_mid", "impliedVolatility", "liq_score", "strike", "dte", "moneyness"]
+    for c in needed:
+        if c not in d.columns:
+            raise RuntimeError(f"Missing column needed for shortlist: {c}")
+
+    d = d.dropna(subset=needed)
+
+    # Screen for “researchable” call buys (triage, not a profit guarantee)
+    d = d[(d["dte"] >= 14) & (d["dte"] <= 60)]
+    d = d[(d["spread_pct_mid"] <= 0.10)]
+    d = d[(d["mid"] >= 0.10)]
+    d = d[(d["moneyness"] >= 0.97) & (d["moneyness"] <= 1.02)]  # ~ATM to slightly OTM
+
+    if "openInterest" in d.columns:
+        d = d[d["openInterest"].fillna(0) >= 100]
+    if "volume" in d.columns:
+        d = d[d["volume"].fillna(0) >= 10]
+
+    d["score"] = d["liq_score"] + 0.25 * d["impliedVolatility"].fillna(0)
+
+    return d.sort_values("score", ascending=False).head(top_n).reset_index(drop=True)
 
 # ----------------------------
 # Run
 # ----------------------------
 
 if __name__ == "__main__":
-    cfg = RunConfig(
+    cfg = RunConfig( 
         ticker="AAPL",      # <-- change me
         min_days=7,
         max_days=120,
@@ -248,3 +285,28 @@ if __name__ == "__main__":
     print("Spot:", meta["spot"])
     print("Rows:", meta["rows"], "Expirations:", meta["expirations_kept"])
     print("Excel:", out)
+
+
+    # Discord alert logic
+    top = shortlist_calls(df_calls, meta, top_n=8)
+
+    if top.empty:
+        print("No shortlist candidates today; no Discord alert sent.")
+    else:
+        lines = []
+        for _, r in top.iterrows():
+            exp = str(r["expiration"])[:10]
+            lines.append(
+                f"- {meta['ticker']} {exp} {float(r['strike']):.0f}C | "
+                f"DTE {int(r['dte'])} | mid {float(r['mid']):.2f} | "
+                f"spr {float(r['spread_pct_mid'])*100:.1f}% | "
+                f"IV {float(r['impliedVolatility']):.2f}"
+            )
+
+        msg = (
+            f"📈 CallBrief — contracts worth researching ({meta['ticker']})\n"
+            f"Spot: {meta['spot']:.2f} | Pulled: {meta['pulled_at']}\n"
+            + "\n".join(lines)
+        )
+
+        send_discord(msg)
