@@ -1,4 +1,3 @@
-import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -234,9 +233,12 @@ def send_discord(message: str) -> None:
     if not url:
         print("DISCORD_WEBHOOK_URL not set; skipping Discord.")
         return
-    r = requests.post(url, json={"content": message[:1900]}, timeout=15)
-    print("Discord status:", r.status_code)
-    r.raise_for_status()
+    try:
+        r = requests.post(url, json={"content": message[:1900]}, timeout=15)
+        print("Discord status:", r.status_code)
+        r.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"Discord send failed: {exc}")
 
 
 def shortlist_calls(df: pd.DataFrame, meta: dict, top_n: int = 8) -> pd.DataFrame:
@@ -270,43 +272,45 @@ def shortlist_calls(df: pd.DataFrame, meta: dict, top_n: int = 8) -> pd.DataFram
 # ----------------------------
 
 if __name__ == "__main__":
-    cfg = RunConfig( 
+    cfg = RunConfig(
         ticker="AAPL",      # <-- change me
         min_days=7,
         max_days=120,
         max_spread_pct=0.20,
     )
 
-    df_calls, meta = fetch_calls(cfg)
-    out = export_to_excel(df_calls, meta, cfg)
-
-    print("Done.")
-    print("Ticker:", meta["ticker"])
-    print("Spot:", meta["spot"])
-    print("Rows:", meta["rows"], "Expirations:", meta["expirations_kept"])
-    print("Excel:", out)
-
-
-    # Discord alert logic
-    top = shortlist_calls(df_calls, meta, top_n=8)
-
-    if top.empty:
-        print("No shortlist candidates today; no Discord alert sent.")
+    try:
+        df_calls, meta = fetch_calls(cfg)
+        out = export_to_excel(df_calls, meta, cfg)
+    except RuntimeError as exc:
+        print(f"Run failed: {exc}")
     else:
-        lines = []
-        for _, r in top.iterrows():
-            exp = str(r["expiration"])[:10]
-            lines.append(
-                f"- {meta['ticker']} {exp} {float(r['strike']):.0f}C | "
-                f"DTE {int(r['dte'])} | mid {float(r['mid']):.2f} | "
-                f"spr {float(r['spread_pct_mid'])*100:.1f}% | "
-                f"IV {float(r['impliedVolatility']):.2f}"
+        print("Done.")
+        print("Ticker:", meta["ticker"])
+        print("Spot:", meta["spot"])
+        print("Rows:", meta["rows"], "Expirations:", meta["expirations_kept"])
+        print("Excel:", out)
+
+        # Discord alert logic
+        top = shortlist_calls(df_calls, meta, top_n=8)
+
+        if top.empty:
+            print("No shortlist candidates today; no Discord alert sent.")
+        else:
+            lines = []
+            for _, r in top.iterrows():
+                exp = str(r["expiration"])[:10]
+                lines.append(
+                    f"- {meta['ticker']} {exp} {float(r['strike']):.0f}C | "
+                    f"DTE {int(r['dte'])} | mid {float(r['mid']):.2f} | "
+                    f"spr {float(r['spread_pct_mid'])*100:.1f}% | "
+                    f"IV {float(r['impliedVolatility']):.2f}"
+                )
+
+            msg = (
+                f"📈 CallBrief — contracts worth researching ({meta['ticker']})\n"
+                f"Spot: {meta['spot']:.2f} | Pulled: {meta['pulled_at']}\n"
+                + "\n".join(lines)
             )
 
-        msg = (
-            f"📈 CallBrief — contracts worth researching ({meta['ticker']})\n"
-            f"Spot: {meta['spot']:.2f} | Pulled: {meta['pulled_at']}\n"
-            + "\n".join(lines)
-        )
-
-        send_discord(msg)
+            send_discord(msg)

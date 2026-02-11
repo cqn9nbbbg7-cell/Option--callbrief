@@ -11,6 +11,8 @@ Automated call option screening with Excel export and optional Discord alerts.
 ## Usage
 ```bash
 python callbrief.py
-Disclaimer
+```
+
+## Disclaimer
 
 Research tool only. Not financial advice.
